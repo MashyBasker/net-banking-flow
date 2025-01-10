@@ -19,7 +19,7 @@ type UserData struct {
 var userDB []UserData
 
 func loadUsers() error {
-	file, err := os.Open("../database/db.csv")
+	file, err := os.Open("./database/db.csv")
 	if err != nil {
 		return fmt.Errorf("failed to open csv file %v", err)
 	}
