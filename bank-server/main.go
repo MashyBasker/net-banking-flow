@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
@@ -129,6 +130,31 @@ func recieveTransferHandler(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
+func receiveOtpHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "[*] Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "[*] Failed to decode encrypted data", http.StatusInternalServerError)
+		return
+	}
+	defer r.Body.Close()
+
+	pqcURL := "http://localhost:8081/decryptOtp"
+	resp, err := http.Post(pqcURL, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		fmt.Println("[*] Failed to forward OTP data to PQC server")
+		return
+	}
+
+	defer resp.Body.Close()
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
 func validateTransferHandler(w http.ResponseWriter, r *http.Request) {
 	var requestData struct {
 		Sender		string	`json:"sender"`
@@ -215,6 +241,49 @@ func validateTransferHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("[+] %s's new balance: %s\n", records[recipientIndex][0], records[recipientIndex][2])
 }
 
+func validateOtpHandler(w http.ResponseWriter, r *http.Request) {
+	var requestData struct {
+		Pin	int	`json:"pin"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&requestData)
+	if err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	defer r.Body.Close()
+
+	fmt.Println("[+] Received OTP validation request")
+	otpFromUser := requestData.Pin
+	file, err := os.Open("./database/otp.txt")
+	if err != nil {
+		fmt.Println("failed to open OTP file")
+		return
+	}
+	defer file.Close()
+	var firstLine string
+	scanner := bufio.NewScanner(file)
+	if scanner.Scan() {
+		firstLine = scanner.Text()
+		fmt.Println("[+] OTP read from file")
+	} else {
+		fmt.Println("[*] No content in file")
+	}
+
+	otpFromSystem, err:= strconv.Atoi(firstLine)
+	if err != nil {
+		fmt.Println("[+] Error converting to integer ", err)
+		return
+	}
+
+	if otpFromSystem == otpFromUser {
+		fmt.Println("[+] OTP validation successful")
+	} else {
+		fmt.Println("[+] OTP validation failed")
+	}
+}
+
 func main() {
 	err := loadUsers()
 	if err != nil {
@@ -225,6 +294,8 @@ func main() {
 	http.HandleFunc("/receive", receiveHandler)
 	http.HandleFunc("/recieveTransfer", recieveTransferHandler)
 	http.HandleFunc("/validateTransfer", validateTransferHandler)
+	http.HandleFunc("/receiveOtp", receiveOtpHandler)
+	http.HandleFunc("/validateOtp", validateOtpHandler)
 	fmt.Println("[+] Bank server running on port 8082")
 	err = http.ListenAndServe(":8082", nil)
 	if err != nil {

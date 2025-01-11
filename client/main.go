@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
+	"time"
 )
 
 type LoginDetails struct {
@@ -20,6 +22,10 @@ type TransferDetails struct {
 	Amount    float64 `json:"amount"`
 }
 
+type OTPDetails struct {
+	Pin	int	`json:"pin"`
+}
+
 var isLoggedIn bool
 var loggedInUser string
 
@@ -28,7 +34,8 @@ func main() {
 		fmt.Println("\n=== Banking System ===")
 		fmt.Println("1. Login")
 		fmt.Println("2. Fund Transfer")
-		fmt.Println("3. Exit")
+		fmt.Println("3. OTP validation")
+		fmt.Println("4. Exit")
 		fmt.Printf("Enter your choice: ")
 
 		var choice int
@@ -43,9 +50,13 @@ func main() {
 			} else {
 				fmt.Println("[*] You must log in before making a fund transfer.")
 			}
-		case 3:
+		case 4:
 			fmt.Println("[+] Exiting the program. Goodbye!")
 			os.Exit(0)
+		case 3:
+			if isLoggedIn {
+				otpValidation()
+			}
 		default:
 			fmt.Println("[*] Invalid choice. Please try again.")
 		}
@@ -125,4 +136,60 @@ func fundTransfer() {
 	}
 
 	fmt.Println("[+] Fund transfer request set.")
+}
+
+
+func otpValidation() {
+	// write a random OTP pin in a file
+	rand.Seed(time.Now().UnixNano())
+	otpRandom := 100000 + rand.Intn(900000)
+	otpFilePath := "./database/otp.txt"
+	file, err := os.Create(otpFilePath)
+	if err != nil {
+		fmt.Println("[*] Failed to create the file: ", err)
+		return
+	}
+
+	defer file.Close()
+
+	_, err = file.WriteString(fmt.Sprintf("%d\n", otpRandom))
+	if err != nil {
+		fmt.Printf("[*] Failed to write to the file: %v\n", err)
+		return
+	}
+
+	var otpPin int
+	fmt.Println("Enter the OTP you received: ")
+	_, err = fmt.Scan(&otpPin)
+	if err != nil {
+		fmt.Println("[*] Unable to get user input")
+		return
+	}
+
+	otp := OTPDetails {
+		Pin: otpPin,
+	}
+
+	data, err := json.Marshal(otp)
+	if err != nil {
+		fmt.Println("[*] Error marshalling login data")
+		return
+	}
+
+	resp, err := http.Post("http://localhost:8081/encryptOtp", "application/json", bytes.NewBuffer(data))
+	if err != nil {
+		fmt.Println("[*] Error sending OTP pin to PQC sever")
+		return
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Println("[*] OTP validation failed. Sever responded with error")
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Println("Response: ", string(body))
+		return
+	}
+
+	fmt.Println("[+] OTP validation request sent")
 }

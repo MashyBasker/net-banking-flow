@@ -31,6 +31,10 @@ type TransferDetails struct {
 	Amount		float64 `json:"amount"`
 }
 
+type OTPDetails struct {
+	Pin int `json:"pin"`
+}
+
 func initKeys() {
 	scheme := mlkem1024.Scheme()
 	pubKey, privKey, _ := scheme.GenerateKeyPair()
@@ -359,12 +363,178 @@ func decryptTransferHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 
+func encryptOtpHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		fmt.Println("[*] Invalid request method")
+		return
+	}
+
+	var otpDetails OTPDetails
+	err := json.NewDecoder(r.Body).Decode(&otpDetails)
+
+	if err != nil {
+		fmt.Println("[*] Invalid: Malformed request")
+		return
+	}
+
+	otpDetailsJSON, err := json.Marshal(otpDetails)
+
+	if err != nil {
+		fmt.Println("[*] Failed to encode OTP details to JSON")
+		return
+	}
+
+	scheme := mlkem1024.Scheme()
+
+	ciphertext, sharedSecret, err := scheme.Encapsulate(pk)
+	if err != nil {
+		http.Error(w, "Key encapsulation failed", http.StatusInternalServerError)
+		fmt.Println("[*] Key encapsulation failed")
+		return
+	}
+	fmt.Println("[+] Key encapsulation with ML-KEM successful")
+	block, err := aes.NewCipher(sharedSecret[:16])
+	if err != nil {
+		http.Error(w, "Failed to create AES cipher block", http.StatusInternalServerError)
+		fmt.Println("[*] Failed to create AES cipher block")
+		return
+	}
+
+	fmt.Println("[+] AES cipher created successfully")
+
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		http.Error(w, "Failed to create AES-GCM cipher block", http.StatusInternalServerError)
+		fmt.Println("[*] Failed to create AES-GCM cipher")
+		return
+	}
+
+	fmt.Println("[+] AES-GCM cipher created successfully")
+	nonce := make([]byte, aesGCM.NonceSize())
+	encryptedData := aesGCM.Seal(nil, nonce, otpDetailsJSON, nil)
+	fmt.Println("[+] Encryption successful")
+	fmt.Printf("[+] Encrypted OTP data (in base64): %s\n", base64.StdEncoding.EncodeToString(encryptedData))
+
+	response := map[string][]byte {
+		"kemCipherText": ciphertext,
+		"encryptedData": encryptedData,
+		"nonce":		 nonce,
+	}
+
+	responseJSON, err := json.Marshal(response)
+	if err != nil {
+		http.Error(w, "Failed to serialize response", http.StatusInternalServerError)
+		fmt.Println("[*] Failed to serialize response")
+		return
+	}
+
+	bankserverURL := "http://localhost:8082/receiveOtp"
+	resp, err := http.Post(bankserverURL, "application/json", bytes.NewBuffer(responseJSON))
+
+	if err != nil {
+		http.Error(w, "Failed to send encrypted OTP to bank server", http.StatusInternalServerError)
+		fmt.Println("[*] Failed to send encrypted OTP to bank server: ", err)
+		return
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		fmt.Println("[+] Successfully sent encrypted OTP request to bank")
+	} else {
+		fmt.Println("[*] Failed to send encrypted OTP request to bank: ", resp.Status, resp.StatusCode)
+	}
+
+	w.Header().Set("Content-type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(responseJSON)
+}
+
+func decryptOtpHandler(w http.ResponseWriter, r *http.Request) {
+	var requestData struct {
+		KemCiphertext	[]byte	`json:"kemCiphertext"`
+		EncryptedData	[]byte	`json:"encryptedData"`
+		Nonce			[]byte	`json:"nonce"`
+	}
+
+	scheme := mlkem1024.Scheme()
+	err := json.NewDecoder(r.Body).Decode(&requestData)
+
+	if err != nil {
+		http.Error(w, "[*] Invalid: Malformed request", http.StatusBadRequest)
+		fmt.Println("[*] The decryption request is invalid")
+		return
+	}
+
+	defer r.Body.Close()
+	sharedSecret, err := scheme.Decapsulate(sk, requestData.KemCiphertext)
+
+	if err != nil {
+		http.Error(w, "Decapsulation failed", http.StatusInternalServerError)
+		fmt.Println("[*] Key decapsulation failed", http.StatusInternalServerError)
+		return
+	}
+
+	fmt.Println("[*] Key Decapsulation successful")
+	block, err := aes.NewCipher(sharedSecret[:16])
+	if err != nil {
+		http.Error(w, "Failed to create cipher block", http.StatusInternalServerError)
+		fmt.Println("[*] AES-GCM cipher could not be created")
+		return
+	}
+
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		http.Error(w, "Failed to create AES-GCM cipher", http.StatusInternalServerError)
+		fmt.Println("[*] AES-GCM cipher could not be created")
+		return
+	}
+
+	plaintext, err := aesGCM.Open(nil, requestData.Nonce, requestData.EncryptedData, nil)
+	if err != nil {
+		http.Error(w, "Decryption failed", http.StatusInternalServerError)
+		fmt.Println("[*] Decryption failed: ", err)
+		return
+	}
+
+	fmt.Println("[+] Decryption successful")
+	fmt.Println("[DEBUG] Decrypted data: ", string(plaintext))
+
+	var otpDetails OTPDetails
+	err = json.Unmarshal(plaintext, &otpDetails)
+	if err != nil {
+		fmt.Println("[*] Failed to encode otp details as JSON")
+		return
+	}
+	fmt.Println("[+] Parsed decrypted data into OtpDetails struct")
+	otpDetailsJSON, err := json.Marshal(otpDetails)
+	if err != nil {
+		fmt.Println("[*] Failed to encode OtpDetails into JSON")
+		return
+	}
+
+	bankserverURL := "http://localhost:8082/validateOtp"
+	fmt.Printf("[+] Sending decrypted fund transfer details to bank server: %s\n", otpDetailsJSON)
+
+	response, err := http.Post(bankserverURL, "application/json", bytes.NewBuffer(otpDetailsJSON))
+	if err != nil {
+		http.Error(w, "[*] failed to send decrypted data to bank server", http.StatusInternalServerError)
+		return
+	}
+	defer response.Body.Close()
+	fmt.Println("[+] Response from bank server: ", response.StatusCode, " ", response.Status)
+	w.WriteHeader(response.StatusCode)
+	io.Copy(w, response.Body)
+}
+
 func main() {
 	initKeys()
 	http.HandleFunc("/encrypt", encryptLoginHandler)
 	http.HandleFunc("/decrypt", decryptLoginHandler)
 	http.HandleFunc("/encryptTransfer", encryptTransferHandler)
 	http.HandleFunc("/decryptTransfer", decryptTransferHandler)
+	http.HandleFunc("/encryptOtp", encryptOtpHandler)
+	http.HandleFunc("/decryptOtp", decryptOtpHandler)
 	fmt.Println("[+] PQC server running on port 8081")
 	http.ListenAndServe(":8081", nil)
 }
