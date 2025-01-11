@@ -143,14 +143,13 @@ func decryptLoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	defer r.Body.Close()
 	sharedSecret, err := scheme.Decapsulate(sk, requestData.KemCiphertext)
-	// fmt.Println("[DEBUG] SK at Login: ", sk)
 	if err != nil {
 		http.Error(w, "Decapsulation failed", http.StatusInternalServerError)
 		return
 	}
 
 	block, err := aes.NewCipher(sharedSecret[:16])
-	// fmt.Println("[DEBUG] Block during Login: ", block)
+
 	if err != nil {
 		http.Error(w, "Failed to create cipher block", http.StatusInternalServerError)
 		return
@@ -205,10 +204,6 @@ func encryptTransferHandler(w http.ResponseWriter, r *http.Request) {
 
 	var transferDetails TransferDetails
 	err := json.NewDecoder(r.Body).Decode(&transferDetails)
-	// body, err := io.ReadAll(r.Body)
-	// if err != nil {
-		// fmt.Println(err)
-	// }
 
 	if err != nil {
 		fmt.Println("[*] Invalid: Malformed request")
@@ -257,11 +252,6 @@ func encryptTransferHandler(w http.ResponseWriter, r *http.Request) {
 		"nonce":		 nonce,
 	}
 
-	// fmt.Printf("[DEBUG] KemCiphertext: %x\n", ciphertext)
-	// fmt.Printf("[DEBUG] Nonce: %x\n", nonce)
-	// fmt.Printf("[DEBUG] Encrypted data: %x\n", encryptedData)
-	// fmt.Printf("[DEBUG] shared secret: %x\n", sharedSecret)
-
 	responseJSON, err := json.Marshal(response)
 	if err != nil {
 		http.Error(w, "Failed to serialize response", http.StatusInternalServerError)
@@ -272,7 +262,6 @@ func encryptTransferHandler(w http.ResponseWriter, r *http.Request) {
 	bankserverURL := "http://localhost:8082/recieveTransfer"
 	resp, err := http.Post(bankserverURL, "application/json", bytes.NewBuffer(responseJSON))
 
-	// fmt.Println("[DEBUG] payload to bank server: ", string(responseJSON))
 	if err != nil {
 		http.Error(w, "Failed to send encrypted transfer data to bank server", http.StatusInternalServerError)
 		fmt.Println("[*] Failed to send encrypted transfer data to bank server")
@@ -311,11 +300,6 @@ func decryptTransferHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	sharedSecret, err := scheme.Decapsulate(sk, requestData.KemCiphertext)
 
-	// fmt.Printf("[DEBUG] KemCiphertext: %x\n", requestData.KemCiphertext)
-	// fmt.Printf("[DEBUG] Nonce: %x\n", requestData.Nonce)
-	// fmt.Printf("[DEBUG] Encrypted data: %x\n", requestData.EncryptedData)
-	// fmt.Printf("[DEBUG] shared secret: %x\n", sharedSecret)
-	// fmt.Println("[DEBUG] SK at fund transfer: ", sk)
 	if err != nil {
 		http.Error(w, "Decapsulation failed", http.StatusInternalServerError)
 		fmt.Println("[*] Key decapsulation failed", http.StatusInternalServerError)

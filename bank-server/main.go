@@ -162,10 +162,6 @@ func validateTransferHandler(w http.ResponseWriter, r *http.Request) {
 	var senderIndex, recipientIndex = -1, -1
 	var senderBalance, recipientBalance float64
 	amount := requestData.Amount
-	// amount, err := strconv.ParseFloat(requestData.Amount, 64)
-	if err != nil {
-		fmt.Println("[*] Invalid amount")
-	}
 
 	for i, record := range records {
 		if record[0] == requestData.Sender {
